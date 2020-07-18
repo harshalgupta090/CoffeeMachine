@@ -12,6 +12,8 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.google.gson.Gson;
 
@@ -21,25 +23,24 @@ import CustomExceptions.OutletNotFreeException;
 
 /*
  * This class simulates a coffee machine. It has 'n' outlets (named 1 to n) and supports a single use on each outlet in parallel. Hence it can handle 'n' orders in parallel.
- * Each of the outlet is independent of other and can serve any beverage supported by the machine. A user can order a beverage by providing its name and outlet.
+ * Each of the outlet is independent of other and can serve any beverage supported by the machine. A user can order a beverage by providing its name.
  * On start, the machine class is instantiated by a json file which contains info about beverages served and the different ingredients used by beverages. 
  * Each ingredient is an instance of Ingredient class and is held by its name in a map in machine instance. As ingredient is shared among all the beverages, only one instance of it should be created. 
  * Each supported beverage is an instance of Beverage class and is held by the machine in a map by its name as key. 
+ * It handles parallel order processing by using an ExecutorService which hold a fixed size thread pool of n threads;
  * 
  * The flow for executing a order for beverage is as follows: 
- * 1. Once a user places an order of beverage by its name and outlet, its first checked for sanity(supported beverage name, supported outlet id). 
- * 2. Then it is checked whether the machine is not restocking at the time. This is checked by a boolean and time flag which is set when the machine starts restocking.
+ * 1. Once a user places an order of beverage by its name, its first checked for sanity(supported beverage name, all outlets busy). 
+ * 2. A runnable job is created and is submit to executor to process. The running orders count is incremented.
+ * 3. Then it is checked whether the machine is not restocking at the time. This is checked by a boolean and time flag which is set when the machine starts restocking.
  *    If sufficient time has elapsed after it started restocking, the boolean sanity checker method will unset the boolean flag and allow the order to proceed, otherwise reject it.
  *    Sufficient time above is specified by a constant. I am using it as 2 seconds.
- * 3. It is checked if the outlet is free or not. If the outlet is busy, the order will be rejected. User can retry the order with some other outlet. 
- *    if all outlets are busy, no order can be placed until any outlet get free.
  * 4. the next check will be that all the required ingredients for the beverage are present in sufficient quantity. If any one of them is lacking, the order will be rejected. 
  *    In case if any of the required ingredient is currently not present in machine then also the order will be rejected. 
- * 5. If all checks are passed, then once again it is checked if the outlet is free. it is required to check the status of outlet because it is not blocked until the order is successfully placed.
- *    in case of race condition, it might happen that a thread passes sanity and outlet free check but before actually placing the order, while other thread has already placed the order on same outlet meanwhile.
- * 6. If everything is favorable, the order is placed and appropriate amount of ingredients are deducted from their current quantity in machine. The thread goes to sleep for a fixed amount of time to simulate preparation time.
- * 7. The flow from ingredient sufficiency check to blocking outlet to deducting ingredients is done in a synchronous way to avoid inconsistency.  
- * 8. In case of any failure, appropriate custom exceptions are thrown which is then returned to user as a string message. In case of success, appropriate success message is returned to user.
+ * 5. If everything is favorable, the order is placed and appropriate amount of ingredients are deducted from their current quantity in machine. The thread goes to sleep for a fixed amount of time to simulate preparation time.
+ * 6. The flow from ingredient sufficiency check to blocking outlet to deducting ingredients is done in a synchronous way to avoid inconsistency.  
+ * 7. In case of any failure, appropriate custom exceptions are thrown which is then returned to user as a string message. In case of success, appropriate success message is returned to user.
+ * 8. At the end of processing the order, the running order count is decremented. It marks the completion of the job.
  * 
  * At any time user can check if any ingredient is running low. this if found out by comparing their current quantity with their low threshold value. 
  * low threshold value is the higher of either 20% of their max_capacity or the maximum amount required by any kind of beverage. 
@@ -57,13 +58,13 @@ public final class Machine implements CoffeeMachine {
 	private static Machine currentMachine = null;
 	
 	//It keeps track of the outlets which are in process of preparing and serving beverage and cant take new order untill it finishes its current order.
-	private Set<Integer> busyOutlets;
+//	private Set<Integer> busyOutlets;
 	
 	//It keeps track of current ingredients. Each ingredient is an object and its name is used as a key to hold it.
 	private ConcurrentHashMap<String, Ingredient>ingredients;
 	
 	//Constant Preparation time for all beverages. using 5 seconds so as to simulate the machine busy flow.
-	private static final int PREPARATION_TIME = 5; // in seconds . 
+	private static final int PREPARATION_TIME =5; // in seconds . 
 	
 	//This is the time taken for machine to restock. No order will be served while machine is restocking. 
 	private static final int STOCKING_TIME = 2; // in seconds
@@ -73,6 +74,9 @@ public final class Machine implements CoffeeMachine {
 	
 	//This map contains a beverage object for each beverage type. It keeps track of ingredient requirement of each beverage type. 
 	private Map<String, Beverage>beverages_types;
+	
+	private static ExecutorService executor; 
+	private static volatile int running_order_count;
 
 	//fields to keep track of time lapsed in restocking. 
 	private Instant restocking_start_time;
@@ -91,6 +95,7 @@ public final class Machine implements CoffeeMachine {
 		try (FileReader reader = new FileReader(settings)){
 			Object obj = gson.fromJson(reader, Object.class);
 			createMachineFromParsedObject(obj);
+			executor = Executors.newFixedThreadPool(TOTAL_OUTLETS);
 			System.out.println(obj);
 		} catch (FileNotFoundException e) {
 			e.printStackTrace();
@@ -146,7 +151,7 @@ public final class Machine implements CoffeeMachine {
 			this.beverages_types.put(beverage_name, bev);
 		}
 		
-		this.busyOutlets = new HashSet<Integer>();
+//		this.busyOutlets = new HashSet<Integer>();
 		
 		adjustLowThresholdForIngredients(ingredient_low_threshold);
 	}
@@ -162,44 +167,51 @@ public final class Machine implements CoffeeMachine {
 			}
 		}
 	}
+	
+	/*
+	 * This is the machine interface method to place an order. It first call the sanity checker method. 
+	 * Then increments the running order count and creates a new runnable object with the order to execute.
+	 */ 
+	public void placeOrder(String beverage) {
+		try {
+			verifyValidity(beverage);
+			BeverageOrder order = new BeverageOrder(this, beverage);
+			running_order_count++;
+			executor.execute(order);
+		} catch (Exception e){
+			System.out.println(e.getMessage());
+		}
+	}
 
 	/*
-	 * This is the main function of the machine. It first does some sanity checks like cheking if outlet is valid, the machine is not restocking, the beverage is supported.
-	 * It also checks and rejects any order placed on an outlet which is already in middle of serving another order.
+	 * This is the main function of the machine. It first does some sanity checks like checking if any outlet is free, the machine is not restocking, the beverage is supported.
 	 * It then calls to verify availability of ingredients and if order can be placed, proceed to call the prepare method of requested beverage object
 	 * In case of any king of failure, it catches custom exceptions and return the error string to user.
 	 * if successful, it then sleeps for 5 second so as to simulate the preparation of beverage. after completion, it also frees the outlet to be used again.
 	 */
-	public String getBeverage(String bev_name, int outlet){
-		String result;
-		try {
-			verifyValidity(bev_name, outlet); //sanity checks and checking if the outlet is not busy.
-			verifyAndPrepareBeverage(bev_name, outlet);
-			System.out.println("machine is preparing to serve "+bev_name+" on outlet "+outlet+". It will Take " + PREPARATION_TIME + " seconds\n");
+	 String getBeverage(String bev_name){
+		 String result;
+		 try {
+			verifyAndPrepareBeverage(bev_name);
+			System.out.println("machine is preparing to serve "+bev_name+". It will Take " + PREPARATION_TIME + " seconds\n");
 			Thread.sleep(PREPARATION_TIME*1000);
-			if (this.busyOutlets.contains(outlet)) {
-				this.busyOutlets.remove(outlet);
-			}
-			result = bev_name + " is prepared on outlet " + outlet;
+			result = bev_name + " is prepared.";
 		} catch(Exception e) {
 			result = e.getMessage();
 		}
+		running_order_count--;
 		return result;
 	}
 	
 	/*
 	 * Sanity checks: Rejects order if
-	 * 1. If the beverage is supported. 
-	 * 2. If the outlet is valid.
-	 * 3. if the machine is currently restocking by giving the waiting time after which machine can be used again
-	 * 4. if the current outlet is available.
+	 * 1. If the beverage is unsupported. 
+	 * 2. if the machine is currently restocking by giving the waiting time after which machine can be used again
+	 * 3. if the No outlet is available.
 	 */
-	private void verifyValidity(String bev, int outlet)throws Exception {
+	private void verifyValidity(String bev)throws Exception {
 		if (!this.beverages_types.containsKey(bev)) {
 			throw new BeverageNotSupportedException(bev);
-		}
-		if (outlet > this.TOTAL_OUTLETS) {
-			throw new Exception("The Outlet " + outlet + " is not valid. Please choose an outlet from 1 to " + this.TOTAL_OUTLETS);
 		}
 		if (isRestocking) {
 			Instant now = Instant.now();
@@ -211,18 +223,8 @@ public final class Machine implements CoffeeMachine {
 				throw new OrderWhileRestockingException(timeleft);
 			}
 		}
-		if (this.busyOutlets.contains(outlet)) {
-			throw new OutletNotFreeException(outlet);
-		}
-	}
-	
-	//before executing the order, we need to set the outlet as busy so as no other order is placed on it simultaneously. 
-	private boolean blockOutletIfAvailable(int outlet) {
-		if (this.busyOutlets.contains(outlet)) {
-			return false;
-		} else {
-			this.busyOutlets.add(outlet);
-			return true;
+		if (running_order_count >= TOTAL_OUTLETS) {
+			throw new OutletNotFreeException();
 		}
 	}
 	
@@ -231,14 +233,10 @@ public final class Machine implements CoffeeMachine {
 	 *This is synchronized because we do not need multiple thread changing quantity of ingredients simultaneously. 
 	 *This can cause an error where there is not sufficient ingredient left for a beverage for which we have committed the order.
 	 */
-	private synchronized void verifyAndPrepareBeverage(String bev_name, int outlet) throws Exception {
+	private synchronized void verifyAndPrepareBeverage(String bev_name) throws Exception {
 		Beverage beverage = this.beverages_types.get(bev_name);
 		if (beverage.verify(this.ingredients)) {
-			if (blockOutletIfAvailable(outlet)) {
-				beverage.prepare(this.ingredients);
-			} else {
-				throw new OutletNotFreeException(outlet);
-			}
+			beverage.prepare(this.ingredients);
 		}
 	}
 	
@@ -326,12 +324,6 @@ public final class Machine implements CoffeeMachine {
 		return this.TOTAL_OUTLETS;
 	}
 	
-	//this is a method used to test running multiple parallel orders. It sets current quantity to Int_max value for all ingredients. This should never be exposed to user in real scenario.
-	public void SetFullCapacityToInfinite() {
-		for (Entry<String, Ingredient>e: this.ingredients.entrySet()) {
-			e.getValue().setNewCurrentCapacity(Integer.MAX_VALUE);
-		}
-	}
 	
 	//provides names of all available ingredients in machine along with their current capacity.
 	public Map<String, Integer>getAvailableIngredients(){
@@ -340,6 +332,26 @@ public final class Machine implements CoffeeMachine {
 			availableIngredients.put(key, this.ingredients.get(key).getCurrent_quantity());
 		}
 		return availableIngredients;
+	}
+	
+	//this is a method used to test running multiple parallel orders. It sets current quantity to Int_max value for all ingredients. This should never be exposed to user in real scenario.
+	public void SetFullCapacityToInfinite() {
+		for (Entry<String, Ingredient>e: this.ingredients.entrySet()) {
+			e.getValue().setNewCurrentCapacity(Integer.MAX_VALUE);
+		}
+	}
+	
+	//method to test different use cases which requires serial flow. Not required in production type implementation.
+	public String placeOrderSerially(String beverage) {
+		String result;
+		try {
+			verifyValidity(beverage);
+			running_order_count++;
+			result = this.getBeverage(beverage);
+		} catch (Exception e){
+			result = e.getMessage();
+		}	
+		return result;
 	}
 	
 }

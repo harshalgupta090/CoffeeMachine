@@ -47,7 +47,7 @@ public class Beverage {
 			if (!ingredients.containsKey(ing.getKey())) {
 				throw new IngredientNotAvailableException(this.name, ing.getKey());
 			} else if (!ingredients.get(ing.getKey()).isSufficient(ing.getValue())) {
-				throw new NotEnoughIngredientException(this.name, ing.getKey());
+				throw new NotEnoughIngredientException(this.name, ing.getKey(), ing.getValue());
 			}
 		}
 		return isPossible;
