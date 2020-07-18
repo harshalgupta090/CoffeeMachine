@@ -46,9 +46,10 @@ public class MainClass {
 		myCoffeeMachine = Machine.GetOrCreateMachine(settingsFilePath);	
 		beverages = myCoffeeMachine.getBeverageOptions();
 		outlet_count  = myCoffeeMachine.getOutletCount();
-//		fullRandomCaseTest();
-		runLargeParallelOrdersTest();
+		fullRandomCaseTest();
+//		runLargeParallelOrdersTest();
 //		ingredientsRunningLowTest();
+//		insufficientIngredientsTest();
 //		restockIngredientsByAmountTest();
 //		addUnvailableIngredientTest();
 //		BeverageNotAvailableTest("masala_tea");
@@ -58,21 +59,32 @@ public class MainClass {
 	
 	//It simulates a normal operation of machine based on user input. You can choose to order any beverage and see different scenarios.
 	public static void fullRandomCaseTest() {
-		System.out.println("Please Provide a number for a beverage you want to have.");
+		System.out.println("Please Provide a number input for a beverage you want to have.");
 		for (int i=0; i<beverages.length; i++) {
 			System.out.print("input: " + (i+1) + " for " + beverages[i]+ " ");
 		}
-		System.out.println("\nInput 0 to exit.");
+		System.out.println("\nInput: " + (beverages.length+1) + " to check status of all ingredients");
+		System.out.println("Input: " + (beverages.length+2) + " to restock all ingredients");
+		System.out.println("Input: 0 to exit.");
 		
 		int input;
 		Scanner in = new Scanner(System.in);
+		boolean loopbreak = false;
 		while (true) {
 			input = in.nextInt();
 			if (input == 0) {
 				in.close();
 				break;
 			}
-			if (input > beverages.length) {
+			if (input == beverages.length+1) {
+				myCoffeeMachine.fullRestockToInitialCapacity(null);
+				continue;
+			}
+			if (input == beverages.length+2) {
+				System.out.println(myCoffeeMachine.getAvailableIngredients());
+				continue;
+			}
+			if (input > beverages.length+1 || input < 0) {
 				System.out.println("this is not a valid option.");
 				continue;
 			}
@@ -82,8 +94,10 @@ public class MainClass {
 	
 	//Run more orders parallel than num_outlets. Result should be that orders placed after all the outlets are busy should be rejected;
 	public static void runLargeParallelOrdersTest() throws InterruptedException {
+		System.out.println("\n\n\n Running runLargeParallelOrdersTest \n\n\n");
+		Thread.sleep(2000);
 		myCoffeeMachine.SetFullCapacityToInfinite();
-		for (int j=0; j<5;j++) {
+		for (int j=0; j<3;j++) {
 			for (int i=0; i<outlet_count+6; i++) {
 				myCoffeeMachine.placeOrder(beverages[0]);
 				Thread.sleep(random.nextInt(1000));
@@ -101,7 +115,9 @@ public class MainClass {
 	 * The above case is then run for all beverages for more exhaustive testing.
 	 * It should be noted that it is possible for  beverages to continue to be prepared even after some of the required ingredients are running low. as running low does not mean insufficient. 
 	 */
-	public static void ingredientsRunningLowTest() {
+	public static void ingredientsRunningLowTest() throws InterruptedException {
+		System.out.println("\n\n\n Running ingredientsRunningLowTest \n\n\n");
+		Thread.sleep(2000);
 		Map<String, int[]> lowIngredients = myCoffeeMachine.getIngredientsRunningLow();
 		boolean ingredientNotFound = false;
 		for (int i=0; i<beverages.length; i++) {
@@ -132,6 +148,8 @@ public class MainClass {
 	
 	//This test checks the case when there are insufficient ingredients of a beverage. It should stop serving and only should serve when the ingredients are restocked. 
 	public static void insufficientIngredientsTest() throws InterruptedException {
+		System.out.println("\n\n\n Running insufficientIngredientsTest \n\n\n");
+		Thread.sleep(2000);
 		boolean ingredientNotFound = false;
 		for (int i=0; i<beverages.length; i++) {
 			while (true) {
@@ -154,7 +172,9 @@ public class MainClass {
 	}
 	
 	//check to see what happens when a unsuported beverage is pased as a param to place order method. response should be order rejection with appropriate message.
-	public static void BeverageNotAvailableTest(String unsupportedBeverage) {
+	public static void BeverageNotAvailableTest(String unsupportedBeverage) throws InterruptedException {
+		System.out.println("\n\n\n Running BeverageNotAvailableTest \n\n\n");
+		Thread.sleep(2000);
 		myCoffeeMachine.placeOrder(unsupportedBeverage);
 	}
 	
@@ -163,7 +183,9 @@ public class MainClass {
 	 * A beverage is orders until its ingredients are running low. 
 	 * Once the restocking is done, we should again get the order successfully
 	 */
-	public static void restockIngredientsByAmountTest() {
+	public static void restockIngredientsByAmountTest() throws InterruptedException {
+		System.out.println("\n\n\n Running restockIngredientsByAmountTest \n\n\n");
+		Thread.sleep(2000);
 		Map<String, int[]> lowIngredients = myCoffeeMachine.getIngredientsRunningLow();
 		boolean ingredientNotFound = false;
 		for (int i=0; i<beverages.length; i++) {
@@ -207,7 +229,9 @@ public class MainClass {
 	 *  We try to get the beverage again. it should get served successfully now.
 	 */
 	
-	public static void addUnvailableIngredientTest() {
+	public static void addUnvailableIngredientTest() throws InterruptedException {
+		System.out.println("\n\n\n Running addUnvailableIngredientTest \n\n\n");
+		Thread.sleep(2000);
 		for (String beverage: beverages) {
 			String result = myCoffeeMachine.placeOrderSerially(beverage);
 			if (result.contains("is not available")) {
